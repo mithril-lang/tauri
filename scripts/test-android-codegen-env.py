@@ -8,6 +8,7 @@ No shipping dependency, installed app, credentials or existing cache is changed.
 """
 import argparse
 import hashlib
+import json
 import os
 from pathlib import Path
 import shutil
@@ -21,8 +22,12 @@ VARIABLES = ('WRY_ANDROID_KOTLIN_FILES_OUT_DIR', 'WRY_ANDROID_PACKAGE',
 
 def main(args):
     stage = args.stage.resolve()
-    if stage.exists():
+    if stage.exists() or ROOT in stage.parents or args.baseline_crate.resolve() in stage.parents:
         raise ValueError('fresh private stage required; never reuse another run')
+    checksums = json.loads((args.baseline_crate / '.cargo-checksum.json').read_text())
+    for name, expected in checksums['files'].items():
+        if hashlib.sha256((args.baseline_crate / name).read_bytes()).hexdigest() != expected:
+            raise ValueError('baseline package content differs: ' + name)
     stage.mkdir(mode=0o700)
     crate = stage / 'tauri'
     shutil.copytree(args.baseline_crate, crate)
