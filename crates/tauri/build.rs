@@ -292,6 +292,19 @@ fn main() {
   }
 
   if target_os == "android" {
+    // The same Cargo target directory can be shared by multiple Android apps
+    // or worktrees. Track the destination as well as template substitutions:
+    // watching only the previous generated files leaves the next app empty.
+    for variable in [
+      "WRY_ANDROID_KOTLIN_FILES_OUT_DIR",
+      "WRY_ANDROID_PACKAGE",
+      "WRY_ANDROID_LIBRARY",
+      "TAURI_ANDROID_PROJECT_PATH",
+      "TAURI_ANDROID_PACKAGE_UNESCAPED",
+    ] {
+      println!("cargo:rerun-if-env-changed={variable}");
+    }
+
     fn env_var(var: &str) -> String {
       std::env::var(var).unwrap_or_else(|_| {
         panic!("`{var}` is not set, which is needed to generate the kotlin files for android.")
