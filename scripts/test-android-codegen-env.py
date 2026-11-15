@@ -21,6 +21,14 @@ VARIABLES = ('WRY_ANDROID_KOTLIN_FILES_OUT_DIR', 'WRY_ANDROID_PACKAGE',
 
 
 def main(args):
+    if not __debug__:
+        raise ValueError('optimized Python disables assertions; run without -O/PYTHONOPTIMIZE')
+    def check_source():
+        source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+        dirty = subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT)
+        if source != args.source or dirty:
+            raise ValueError('clean fixed source checkout required')
+    check_source()
     stage = args.stage.resolve()
     if stage.exists() or ROOT in stage.parents or args.baseline_crate.resolve() in stage.parents:
         raise ValueError('fresh private stage required; never reuse another run')
@@ -34,6 +42,8 @@ def main(args):
                     ignore=shutil.ignore_patterns('target', 'build', '.gradle'))
     baseline = (crate / 'build.rs').read_bytes()
     fixed = (ROOT / 'crates/tauri/build.rs').read_bytes()
+    if hashlib.sha256(fixed).hexdigest() != args.fixed_build_sha256:
+        raise ValueError('fixed build script differs from trusted caller fingerprint')
     if hashlib.sha256(baseline).hexdigest() != 'd3e34b25ac35f605501d24faa9286167cfa8482b5a48fb9c6fae5d76912daf4f':
         raise ValueError('expected published alpha.6 build-script source')
     if baseline == fixed:
@@ -105,9 +115,13 @@ def main(args):
         env[key] = value
         build('restore-' + key)
         check_outputs()
-    print({'cargoRuns': count, 'baselineFailureReproduced': True,
+    check_source()
+    receipt = {'source': args.source, 'cargoRuns': count, 'baselineFailureReproduced': True,
            'fixedBuildScriptSha256': hashlib.sha256(fixed).hexdigest(),
-           'qualification': 'Android build-script component only; no APK/device/release claim'})
+           'qualification': 'Android build-script component only; no APK/device/release claim'}
+    with (stage / 'receipt.json').open('x') as output:
+        json.dump(receipt, output, sort_keys=True)
+    print(receipt)
 
 
 if __name__ == '__main__':
@@ -116,4 +130,6 @@ if __name__ == '__main__':
     parser.add_argument('--seed-lock', type=Path, required=True)
     parser.add_argument('--stage', type=Path, required=True)
     parser.add_argument('--cargo', type=Path, required=True)
+    parser.add_argument('--source', required=True)
+    parser.add_argument('--fixed-build-sha256', required=True)
     main(parser.parse_args())
