@@ -6,7 +6,8 @@ must differ from this checkout only by the reviewed environment tracking patch.
 The caller must exclusively own and serialize access to --target-dir; the harness
 validates its location but cannot prove ownership or inter-process exclusion.
 The private --stage receives a disposable source copy, lockfile and build logs.
-No shipping dependency, installed app, credentials or existing cache is changed.
+No shipping dependency, installed app or credentials are changed. Only the
+selected caller-owned target cache may be reused.
 """
 import argparse
 import hashlib
