@@ -32,19 +32,20 @@
 //!
 //! # The Windows case
 //!
-//! **Windows currently runs unsandboxed, whatever the policy says.** Chromium's Windows
+//! A standalone Windows executable has no broker. Chromium's Windows
 //! sandbox is brokered by the executable rather than by the library: CEF wants a
 //! `sandbox_info` pointer from `cef_sandbox_info_create()` passed into both
 //! `CefExecuteProcess` and `CefInitialize`, and when it gets a null one it sets
 //! `CefSettings.no_sandbox` itself and appends `--no-sandbox`
-//! (`libcef/browser/main_runner.cc`). This runtime passes null.
+//! (`libcef/browser/main_runner.cc`). A client DLL entered through
+//! `run_windows_bootstrap` lends the checked bootstrap pointer to all CEF calls.
 //!
-//! Fixing that is a packaging change, not a code change: since Chromium M138 the sandbox
+//! This also requires an explicit packaging change: since Chromium M138 the sandbox
 //! entry point can only be linked by a binary built with Chromium's own toolchain, so CEF
 //! ships prebuilt `bootstrap.exe` / `bootstrapc.exe` hosts that load the application as a
 //! DLL exporting `RunWinMain` or `RunConsoleMain` and hand it the pointer. A Tauri
-//! application is built as an executable, so until it can be built and bundled as a
-//! bootstrap-hosted DLL there is nothing to pass.
+//! application built as an executable still has nothing to pass. A client DLL
+//! must run under the matching distribution's bootstrap, including subprocesses.
 //!
 //! Until then the honest thing is to say so: [`windows_sandbox_unavailable`] reports the
 //! gap so [`SandboxPolicy::Auto`] logs it like any other lost sandbox, and
@@ -61,10 +62,12 @@ use crate::runtime::SandboxPolicy;
 
 /// Whether this platform can actually sandbox, given how the runtime initializes CEF.
 ///
-/// Windows cannot yet: see the module docs. Kept as a function of a `cfg` rather than a
-/// `cfg` at every use site so the decision table stays testable on one platform.
-pub(crate) const fn windows_sandbox_unavailable() -> bool {
-  cfg!(windows)
+/// On Windows, only the checked bootstrap entry's original thread has a broker.
+pub(crate) fn windows_sandbox_unavailable() -> bool {
+  #[cfg(windows)]
+  { crate::windows_bootstrap::sandbox_info().is_null() }
+  #[cfg(not(windows))]
+  { false }
 }
 
 /// Why the sandbox is being turned off.
