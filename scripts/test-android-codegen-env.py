@@ -3,6 +3,8 @@
 
 Use the published tauri 3.0.0-alpha.6 source as --baseline-crate. Its build.rs
 must differ from this checkout only by the reviewed environment tracking patch.
+The caller must exclusively own and serialize access to --target-dir; the harness
+validates its location but cannot prove ownership or inter-process exclusion.
 The private --stage receives a disposable source copy, lockfile and build logs.
 No shipping dependency, installed app, credentials or existing cache is changed.
 """
@@ -50,7 +52,7 @@ def main(args):
         raise ValueError('baseline must be the unpatched published build script')
     shutil.copy2(args.seed_lock, crate / 'Cargo.lock')
     target = args.target_dir or stage / 'target'
-    if not target.is_absolute() or target.resolve() != target or ROOT in target.parents:
+    if not target.is_absolute() or target.resolve() != target or target == ROOT or ROOT in target.parents:
         raise ValueError('qualified absolute Cargo target outside checkout required')
     env = os.environ.copy()
     for key in VARIABLES:
