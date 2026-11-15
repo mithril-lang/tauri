@@ -271,7 +271,7 @@ pub fn build(
   rename_app(bin_path, main_binary_name, &app_settings.target_platform)
 }
 
-fn build_production_app(
+pub(super) fn build_production_app(
   options: Options,
   available_targets: &mut Option<Vec<RustupTarget>>,
   config_features: Vec<String>,

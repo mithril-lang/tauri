@@ -714,6 +714,9 @@ impl WebviewRuntime {
 /// The bundle settings of the BuildArtifact we're bundling.
 #[derive(Clone, Debug, Default)]
 pub struct BundleSettings {
+  /// Client DLL containing Tauri metadata when a Windows CEF bootstrap is the
+  /// main executable. A file name in the project output, never an arbitrary path.
+  pub windows_cef_client_dll: Option<String>,
   /// the app's identifier.
   pub identifier: Option<String>,
   /// The app's publisher. Defaults to the second element in the identifier string.
@@ -1258,8 +1261,35 @@ impl Settings {
     }
   }
 
-  /// Returns an iterator over the resource files to be included in this
-  /// bundle.
+  /// Tauri metadata lives in the client DLL of a Windows CEF bootstrap pair.
+  pub fn windows_cef_client_dll_path(&self) -> crate::Result<Option<PathBuf>> {
+    let Some(name) = &self.bundle_settings.windows_cef_client_dll else {
+      return Ok(None);
+    };
+    if self.target_platform() != &TargetPlatform::Windows
+      || !matches!(
+        self.webview_runtime(),
+        WebviewRuntime::Cef {
+          distribution: Some(_),
+          ..
+        }
+      )
+      || name.contains(['/', '\\', ':'])
+    {
+      return Err(crate::Error::GenericError(
+        "invalid Windows CEF client DLL settings".into(),
+      ));
+    }
+    let expected = self.binary_path(self.main_binary()?).with_extension("dll");
+    if expected.file_name() != Some(std::ffi::OsStr::new(name)) {
+      return Err(crate::Error::GenericError(
+        "CEF client DLL must match the bootstrap executable name".into(),
+      ));
+    }
+    Ok(Some(expected))
+  }
+
+  /// Returns an iterator over the resource files to be included in this bundle.
   pub fn resource_files(&self) -> ResourcePaths<'_> {
     match (
       &self.bundle_settings.resources,

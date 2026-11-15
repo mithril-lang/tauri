@@ -17,6 +17,7 @@ use tauri_utils::config::WebviewInstallMode;
 use crate::interface::rust::manifest::Manifest;
 
 pub mod cef;
+pub(crate) mod windows_bootstrap;
 #[cfg(target_os = "macos")]
 pub mod macos_dev;
 
