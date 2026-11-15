@@ -30,7 +30,8 @@ def main(args):
             raise ValueError('baseline package content differs: ' + name)
     stage.mkdir(mode=0o700)
     crate = stage / 'tauri'
-    shutil.copytree(args.baseline_crate, crate)
+    shutil.copytree(args.baseline_crate, crate,
+                    ignore=shutil.ignore_patterns('target', 'build', '.gradle'))
     baseline = (crate / 'build.rs').read_bytes()
     fixed = (ROOT / 'crates/tauri/build.rs').read_bytes()
     if hashlib.sha256(baseline).hexdigest() != 'd3e34b25ac35f605501d24faa9286167cfa8482b5a48fb9c6fae5d76912daf4f':
