@@ -23,6 +23,7 @@ pub(super) struct ClientBinary {
   marker: PathBuf,
   backup: Option<tempfile::NamedTempFile>,
   permissions: fs::Permissions,
+  restoration_unconfirmed: bool,
 }
 
 impl ClientBinary {
@@ -64,10 +65,25 @@ impl ClientBinary {
       marker,
       backup: Some(backup),
       permissions: metadata.permissions(),
+      restoration_unconfirmed: false,
     })
   }
 
   pub(super) fn restore(&mut self) -> anyhow::Result<()> {
+    if self.restoration_unconfirmed {
+      bail!("CEF restoration is unconfirmed; preserve the candidate for owner reconciliation");
+    }
+    // Latch before any restoration I/O. A failure or unwind must never turn
+    // into an implicit second write from Drop, even if that write could succeed.
+    self.restoration_unconfirmed = true;
+    let result = self.restore_contents();
+    if result.is_ok() {
+      self.restoration_unconfirmed = false;
+    }
+    result
+  }
+
+  fn restore_contents(&mut self) -> anyhow::Result<()> {
     let backup = self.backup.as_mut().context("CEF recovery copy missing")?;
     let mut replacement =
       tempfile::NamedTempFile::new_in(self.path.parent().context("CEF client parent missing")?)?;
@@ -104,6 +120,7 @@ impl ClientBinary {
 
   pub(super) fn finish(&mut self) -> anyhow::Result<()> {
     self.restore()?;
+    self.restoration_unconfirmed = true;
     fs::remove_file(&self.marker)?;
     if let Some(backup) = &mut self.backup {
       backup.disable_cleanup(false);
@@ -116,6 +133,15 @@ impl ClientBinary {
 impl Drop for ClientBinary {
   fn drop(&mut self) {
     if self.backup.is_none() {
+      return;
+    }
+    if self.restoration_unconfirmed {
+      if let Some(backup) = &self.backup {
+        log::error!(
+          "CEF restoration unconfirmed; preserve marker and recovery {}",
+          backup.path().display()
+        );
+      }
       return;
     }
     let restored = self.restore().and_then(|_| {
@@ -173,11 +199,13 @@ mod tests {
     fs::remove_file(&path).unwrap();
     fs::create_dir(&path).unwrap();
     assert!(guard.restore().is_err());
+    // Remove the transient fault: a second restore WOULD now succeed. Drop
+    // must not retry or erase the first unknown outcome and its evidence.
+    fs::remove_dir(&path).unwrap();
+    fs::write(&path, b"unknown stage").unwrap();
     drop(guard);
     assert_eq!(fs::read(&recovery).unwrap(), b"original client");
     assert!(windows_cef_bundle_marker(&path).is_file());
-    fs::remove_dir(&path).unwrap();
-    fs::write(&path, b"unknown stage").unwrap();
     assert!(ClientBinary::new(&path).is_err());
     assert_eq!(fs::read(&path).unwrap(), b"unknown stage");
   }
