@@ -90,31 +90,38 @@ pub(crate) fn stage(
     bail!("invalid Windows bootstrap executable name");
   }
   let output_dll = output_exe.with_extension("dll");
-  let same_dll = client == output_dll;
+  if client == output_dll {
+    bail!(
+      "client library name must differ from the bootstrap name; preserve the original Cargo DLL"
+    );
+  }
   if output_exe
     .parent()
     .context("bootstrap output parent missing")?
-    .canonicalize()?
+    .canonicalize()
+    .context("Windows bootstrap directory unavailable")?
     != client
       .parent()
       .context("Cargo DLL parent missing")?
-      .canonicalize()?
+      .canonicalize()
+      .context("Windows bootstrap directory unavailable")?
   {
     bail!("Windows bootstrap must stay in the Cargo output directory");
   }
   // Validate both inputs completely before creating either output.
   let dll = read_image(client, target, true)?;
   let bootstrap = read_image(&distribution.join("bootstrap.exe"), target, false)?;
-  if fs::symlink_metadata(output_exe).is_ok()
-    || (!same_dll && fs::symlink_metadata(&output_dll).is_ok())
-  {
+  if fs::symlink_metadata(output_exe).is_ok() || fs::symlink_metadata(&output_dll).is_ok() {
     bail!("Windows bootstrap output already exists; use a fresh isolated Cargo target directory");
   }
   if output_exe
     .parent()
     .context("bootstrap output parent missing")?
-    .canonicalize()?
-    == distribution.canonicalize()?
+    .canonicalize()
+    .context("Windows bootstrap directory unavailable")?
+    == distribution
+      .canonicalize()
+      .context("Windows bootstrap directory unavailable")?
   {
     bail!("bootstrap output cannot replace the CEF distribution");
   }
@@ -122,14 +129,15 @@ pub(crate) fn stage(
     let mut file = fs::OpenOptions::new()
       .write(true)
       .create_new(true)
-      .open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
+      .open(path)
+      .context("failed to create bootstrap stage")?;
+    file
+      .write_all(bytes)
+      .context("failed to write bootstrap stage")?;
+    file.sync_all().context("failed to sync bootstrap stage")?;
     Ok(())
   };
-  if !same_dll {
-    write_new(&output_dll, &dll)?;
-  }
+  write_new(&output_dll, &dll)?;
   write_new(output_exe, &bootstrap)?;
   Ok(())
 }
@@ -142,6 +150,13 @@ pub(crate) fn verify_pair(
   executable: &Path,
   target: &str,
 ) -> crate::Result<()> {
+  if fs::symlink_metadata(tauri_bundler::windows_cef_bundle_marker(
+    &executable.with_extension("dll"),
+  ))
+  .is_ok()
+  {
+    bail!("interrupted CEF bundle requires owner reconciliation");
+  }
   let dll = read_image(client, target, true)?;
   let staged = read_image(&executable.with_extension("dll"), target, true)?;
   let original_bootstrap = read_image(&distribution.join("bootstrap.exe"), target, false)?;
@@ -170,7 +185,7 @@ pub(crate) fn add_client_resource(
   };
   let mut map = HashMap::new();
   for resource in resources.iter() {
-    let resource = resource?;
+    let resource = resource.context("invalid Windows client resource")?;
     let destination = resource.target().to_string_lossy().replace('\\', "/");
     if destination.eq_ignore_ascii_case(target) {
       bail!("custom resource conflicts with the Windows CEF client DLL");
@@ -291,6 +306,10 @@ mod tests {
     fs::write(dist.join("bootstrap.exe"), pe(false, false)).unwrap();
     stage(&dist, &client, &exe, TARGET).unwrap();
     verify_pair(&dist, &client, &exe, TARGET).unwrap();
+    let marker = tauri_bundler::windows_cef_bundle_marker(&exe.with_extension("dll"));
+    fs::write(&marker, b"synthetic interrupted candidate").unwrap();
+    assert!(verify_pair(&dist, &client, &exe, TARGET).is_err());
+    fs::remove_file(marker).unwrap();
     assert_eq!(fs::read(&client).unwrap(), pe(true, true));
     assert_eq!(
       fs::read(dist.join("bootstrap.exe")).unwrap(),
@@ -315,6 +334,9 @@ mod tests {
     assert!(stage(&dist, &client, &out.join("app.exe"), TARGET).is_err());
     assert!(!out.join("app.exe").exists() && !out.join("app.dll").exists());
     fs::write(&client, pe(true, true)).unwrap();
+    assert!(stage(&dist, &client, &out.join("crate_lib.exe"), TARGET).is_err());
+    assert_eq!(fs::read(&client).unwrap(), pe(true, true));
+    assert!(!out.join("crate_lib.exe").exists());
     assert!(stage(&dist, &client, &root.path().join("escaped.exe"), TARGET).is_err());
     assert!(!root.path().join("escaped.exe").exists());
   }
