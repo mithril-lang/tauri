@@ -85,6 +85,11 @@ impl From<crate::bundle::Options> for Options {
       config: options.config,
       target: options.target,
       features: options.features,
+      args: if options.no_default_features {
+        vec!["--no-default-features".into()]
+      } else {
+        Vec::new()
+      },
       no_watch: true,
       skip_stapling: options.skip_stapling,
       ..Default::default()
