@@ -114,6 +114,7 @@ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<PathBuf>> {
     sign_paths.extend(helper_paths.into_iter().map(|path| SignTarget {
       path,
       is_an_executable: true,
+      is_cef_helper: true,
     }));
 
     if let Some(cef_path) = distribution {
@@ -136,12 +137,14 @@ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<PathBuf>> {
   sign_paths.extend(bin_paths.into_iter().map(|path| SignTarget {
     path,
     is_an_executable: true,
+    is_cef_helper: false,
   }));
 
   let bin_paths = copy_binaries_to_bundle(&bundle_directory, settings)?;
   sign_paths.extend(bin_paths.into_iter().map(|path| SignTarget {
     path,
     is_an_executable: true,
+    is_cef_helper: false,
   }));
 
   if settings.no_sign() {
@@ -154,6 +157,7 @@ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<PathBuf>> {
     sign_paths.push(SignTarget {
       path: app_bundle_path.clone(),
       is_an_executable: true,
+      is_cef_helper: false,
     });
 
     // Remove extra attributes, which could cause codesign to fail
@@ -442,6 +446,7 @@ fn copy_frameworks_to_bundle(
       paths.push(SignTarget {
         path: dest_path,
         is_an_executable: false,
+        is_cef_helper: false,
       });
       continue;
     } else if framework.contains('/') {
@@ -489,6 +494,7 @@ fn add_framework_sign_path(
   sign_paths.push(SignTarget {
     path: dest_path.into(),
     is_an_executable: false,
+    is_cef_helper: false,
   });
 }
 
@@ -510,6 +516,7 @@ fn add_executable_bundle_sign_path(
   sign_paths.push(SignTarget {
     path: dest_path.into(),
     is_an_executable: true,
+    is_cef_helper: false,
   });
 }
 
@@ -544,11 +551,13 @@ fn add_nested_code_sign_path(src_path: &Path, dest_path: &Path, sign_paths: &mut
             sign_paths.push(SignTarget {
               path: dest_path,
               is_an_executable: false,
+              is_cef_helper: false,
             });
           } else if ext.is_none() {
             sign_paths.push(SignTarget {
               path: dest_path,
               is_an_executable: true,
+              is_cef_helper: false,
             });
           }
         }

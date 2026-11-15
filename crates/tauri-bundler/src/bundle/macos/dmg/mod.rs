@@ -219,6 +219,7 @@ pub fn bundle_project(settings: &Settings, bundles: &[Bundle]) -> crate::Result<
       vec![super::sign::SignTarget {
         path: dmg_path.clone(),
         is_an_executable: false,
+        is_cef_helper: false,
       }],
       settings,
     )?;
