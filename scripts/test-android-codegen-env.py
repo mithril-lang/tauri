@@ -49,7 +49,9 @@ def main(args):
     if baseline == fixed:
         raise ValueError('baseline must be the unpatched published build script')
     shutil.copy2(args.seed_lock, crate / 'Cargo.lock')
-    target = stage / 'target'
+    target = args.target_dir or stage / 'target'
+    if not target.is_absolute() or target.resolve() != target or ROOT in target.parents:
+        raise ValueError('qualified absolute Cargo target outside checkout required')
     env = os.environ.copy()
     for key in VARIABLES:
         env.pop(key, None)
@@ -92,6 +94,11 @@ def main(args):
 
     build('baseline-a', locked=False)
     check_outputs()
+    # The baseline watches its own generated file. Its first write can itself
+    # cause one extra Cargo run; settle that before changing either destination.
+    # Otherwise that unrelated initial rerun can mask the missing env watches.
+    build('baseline-a-warm-control')
+    check_outputs()
     env['WRY_ANDROID_KOTLIN_FILES_OUT_DIR'] = str(kotlin_b)
     env['TAURI_ANDROID_PROJECT_PATH'] = str(project_b)
     build('baseline-b-missing-output')
@@ -132,4 +139,6 @@ if __name__ == '__main__':
     parser.add_argument('--cargo', type=Path, required=True)
     parser.add_argument('--source', required=True)
     parser.add_argument('--fixed-build-sha256', required=True)
+    parser.add_argument('--target-dir', type=Path,
+                        help='optional caller-owned cache; serialize access, preserve prior runs')
     main(parser.parse_args())
