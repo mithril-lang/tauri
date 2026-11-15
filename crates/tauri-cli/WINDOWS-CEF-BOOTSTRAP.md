@@ -8,7 +8,9 @@ There is no WebView2 or unsandboxed fallback.
 Set `bundle.cef.embed` and `bundle.cef.windowsBootstrap` to `true`. Use an
 explicit MSVC target and an isolated, fresh `CARGO_TARGET_DIR` per candidate.
 The application needs an explicit `[lib]` with `crate-type = ["cdylib"]`
-(additional crate types are allowed). Export the shared application entry:
+(additional crate types are allowed). Set a library name different from the
+main executable base name so the original Cargo DLL is never mutated.
+Export the shared application entry:
 
 ```rust,ignore
 #[cfg(target_os = "windows")]
@@ -31,6 +33,12 @@ rebundled through this profile. The bundler adds the client DLL at the install
 root without changing existing resource destinations. Tauri bundle metadata
 is patched in the client DLL; configured signing runs after that patch.
 The bootstrap is not patched as though it contained Rust/Tauri metadata.
+Normal errors and unwinds restore the staged DLL via atomic replacement and
+full content read-back. Process abort/kill cannot run restoration. An interrupted
+or failed restoration retains a named recovery copy and an in-progress marker;
+further bundling is refused pending owner reconciliation. Preserve the entire
+candidate on unknown outcomes; do not delete its marker to retry automatically.
+This is not a power-loss or OS-level crash qualification.
 
 Component tests and cross-target type checking do not qualify the CEF SDK ABI,
 Windows loader, process sandbox, installer, signing or Microsoft Store release.

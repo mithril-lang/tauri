@@ -4,6 +4,8 @@
 // SPDX-License-Identifier: MIT
 
 mod category;
+mod client_binary;
+pub use client_binary::windows_cef_bundle_marker;
 mod kmp;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -133,14 +135,10 @@ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<Bundle>> {
   let main_binary_path = settings.binary_path(main_binary);
   let client_binary_path = settings.windows_cef_client_dll_path()?;
   let metadata_binary_path = client_binary_path.as_ref().unwrap_or(&main_binary_path);
-  let mut client_binary_copy = if let Some(path) = &client_binary_path {
-    let mut copy = tempfile::tempfile().context("failed to preserve CEF client DLL")?;
-    let mut original = std::fs::File::open(path)?;
-    std::io::copy(&mut original, &mut copy)?;
-    Some(copy)
-  } else {
-    None
-  };
+  let mut client_binary_copy = client_binary_path
+    .as_deref()
+    .map(client_binary::ClientBinary::new)
+    .transpose()?;
 
   // We make a copy of the unsigned main_binary so that we can restore it after each package_type step.
   // This allows us to patch the binary correctly and avoids two issues:
@@ -180,7 +178,10 @@ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<Bundle>> {
     }
 
     // sign main binary for every package type after patch
-    if matches!(target_os, TargetPlatform::Windows) && settings.windows().can_sign() {
+    if matches!(target_os, TargetPlatform::Windows)
+      && settings.windows().can_sign()
+      && !settings.no_sign()
+    {
       windows::sign::try_sign(&main_binary_path, settings)?;
       if let Some(path) = &client_binary_path {
         windows::sign::try_sign(path, settings)?;
@@ -234,14 +235,12 @@ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<Bundle>> {
       .open(&main_binary_path)?;
     main_binary_copy.seek(SeekFrom::Start(0))?;
     std::io::copy(&mut main_binary_copy, &mut modified_main_binary)?;
-    if let (Some(path), Some(copy)) = (&client_binary_path, &mut client_binary_copy) {
-      let mut restored = std::fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(path)?;
-      copy.seek(SeekFrom::Start(0))?;
-      std::io::copy(copy, &mut restored)?;
+    if let Some(copy) = &mut client_binary_copy {
+      copy.restore()?;
     }
+  }
+  if let Some(copy) = &mut client_binary_copy {
+    copy.finish()?;
   }
 
   if let Some(updater) = settings.updater() {
