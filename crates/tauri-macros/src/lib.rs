@@ -162,6 +162,13 @@ pub fn mobile_entry_point(attributes: TokenStream, item: TokenStream) -> TokenSt
 /// }
 /// ```
 ///
+/// For a Windows client `cdylib`, `#[cef_entry_point(windows_bootstrap)]` on a
+/// synchronous `fn()` also exports CEF's five-argument `RunWinMain` entry.
+/// It accepts only a checked broker from the matching CEF bootstrap executable;
+/// it does not convert an executable into a DLL or package/sign the bootstrap.
+/// Apply it once to the library's application entry, not to a second DLL entry.
+/// Standalone executable behavior is unchanged.
+///
 /// # Stability
 /// The output of this macro is managed internally by Tauri,
 /// and should not be accessed directly on normal applications.
