@@ -103,6 +103,10 @@ pub use cef;
 ///   keychain item whose ACL is bound to the code signature of the process that reads
 ///   it. Ad-hoc-signed development builds get a new signature on every rebuild, so macOS
 ///   puts up the keychain password prompt again after every `cargo build`.
+///   Applications can opt into a dedicated service and account using [`Cef::with_settings`].
+///   Changing these names selects a different Keychain item and can make an existing
+///   encrypted profile unreadable; use a separately planned profile migration or a fresh
+///   isolated cache, and retain the old item and profile for recovery.
 /// - on Linux, `os_crypt` asks the D-Bus secret portal, libsecret or KWallet for the
 ///   key, which pops a keyring-unlock dialog the first time an app runs.
 ///
