@@ -2753,7 +2753,7 @@ fn process_sandbox_info() -> *mut u8 {
   { std::ptr::null_mut() }
 }
 
-pub fn run_cef_helper_process() {
+pub fn run_cef_helper_process() -> i32 {
   let args = cef::args::Args::new();
 
   // A helper the browser process launched with `--no-sandbox` must not enter the sandbox
@@ -2781,11 +2781,28 @@ pub fn run_cef_helper_process() {
     panic!("the loaded CEF library does not support CEF API version {version}");
   }
   let mut app = TauriCefHelperApp::new();
-  let _ = cef::execute_process(
+  let result = cef::execute_process(
     Some(args.as_main_args()),
     Some(&mut app),
     process_sandbox_info(),
   );
+  child_process_exit_code(result)
+}
+
+// This function is only called after a child-process switch was observed.
+// CEF's negative result means it did not run a child and cannot be success.
+fn child_process_exit_code(result: i32) -> i32 {
+  if result < 0 { 78 } else { result }
+}
+
+#[cfg(test)]
+mod child_exit_tests {
+  #[test]
+  fn child_status_is_preserved_and_unexpected_negative_refused() {
+    assert_eq!(super::child_process_exit_code(0), 0);
+    assert_eq!(super::child_process_exit_code(37), 37);
+    assert_eq!(super::child_process_exit_code(-1), 78);
+  }
 }
 
 wrap_app! {
