@@ -3818,6 +3818,19 @@ mod configuration_tests {
     );
   }
 
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn custom_keychain_names_reach_cef_settings() {
+    let cef = Cef::default().with_settings(|settings| {
+      settings.keychain_service_name = "test-only-service".into();
+      settings.keychain_account_name = "test-only-account".into();
+    });
+    let mut settings = cef::Settings::default();
+    cef.settings_callback.expect("settings callback")(&mut settings);
+    assert_eq!(settings.keychain_service_name.to_string(), "test-only-service");
+    assert_eq!(settings.keychain_account_name.to_string(), "test-only-account");
+  }
+
   #[test]
   fn remote_debugging_is_off_by_default() {
     assert_eq!(RemoteDebugging::default(), RemoteDebugging::Disabled);
