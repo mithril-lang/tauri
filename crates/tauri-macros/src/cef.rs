@@ -96,7 +96,17 @@ fn expand(
         version_info: *const ::std::ffi::c_void,
       ) -> i32 {
         unsafe {
-          ::tauri_runtime_cef::run_windows_bootstrap(sandbox_info, version_info, || #name())
+          ::tauri_runtime_cef::run_windows_bootstrap(sandbox_info, version_info, || {
+            let is_child = ::std::env::args_os().any(|arg| {
+              arg.to_str().is_some_and(|arg| arg.starts_with("--type="))
+            });
+            if is_child {
+              ::tauri_runtime_cef::run_cef_helper_process()
+            } else {
+              #name();
+              0
+            }
+          })
         }
       }
     }
@@ -139,6 +149,11 @@ mod tests {
         .value(),
       "C"
     );
+    // The child branch must yield the CEF result rather than execute it as a
+    // statement and fall through to a successful browser return.
+    let body = quote!(#entry).to_string();
+    assert!(body.contains("run_cef_helper_process () } else"));
+    assert!(!body.contains("run_cef_helper_process () ; } else"));
   }
 
   #[test]
