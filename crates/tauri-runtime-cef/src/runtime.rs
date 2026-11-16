@@ -3825,6 +3825,15 @@ mod configuration_tests {
   #[cfg(target_os = "macos")]
   #[test]
   fn custom_keychain_names_reach_cef_settings() {
+    // macOS CEF string conversion uses symbols provided by the dynamically
+    // loaded framework. Load it just as cef-rs does in its own tests; do not
+    // initialize a browser or access any Keychain item.
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    let root = cef::sys::get_cef_dir().expect("CEF distribution is required");
+    let path = root.join(cef::sys::FRAMEWORK_PATH).canonicalize().expect("CEF framework");
+    let path = CString::new(path.as_os_str().as_bytes()).expect("CEF framework path");
+    assert_eq!(unsafe { cef::sys::cef_load_library(path.as_ptr()) }, 1);
+    let _ = cef::api_hash(cef::sys::CEF_API_VERSION_LAST, 0);
     let cef = Cef::default().with_settings(|settings| {
       settings.keychain_service_name = "test-only-service".into();
       settings.keychain_account_name = "test-only-account".into();
