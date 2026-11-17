@@ -72,6 +72,9 @@ pub struct Options {
   /// Space or comma separated list of features, should be the same features passed to `tauri build` if any.
   #[clap(short, long, action = ArgAction::Append, num_args(0..), value_delimiter = ',')]
   pub features: Vec<String>,
+  /// Do not enable the Cargo default feature when selecting the bundled runtime.
+  #[clap(long)]
+  pub no_default_features: bool,
   /// Target triple to build against.
   ///
   /// It must be one of the values outputted by `$rustc --print target-list` or `universal-apple-darwin` for an universal macOS application.
@@ -117,6 +120,7 @@ impl From<crate::build::Options> for Options {
       bundles: value.bundles,
       target: value.target,
       features: value.features,
+      no_default_features: value.args.iter().any(|arg| arg == "--no-default-features"),
       debug: value.debug,
       ci: value.ci,
       config: value.config,
@@ -344,4 +348,70 @@ fn print_signed_updater_archive(output_paths: &[PathBuf]) -> crate::Result<()> {
     log::info!( action = "Finished"; "{finished_bundles} {pluralised} at:\n{printable_paths}");
   }
   Ok(())
+}
+
+#[cfg(test)]
+mod runtime_feature_tests {
+  use super::*;
+  use crate::{
+    interface::rust::{Options as RustOptions, manifest::Manifest},
+    runtime::Runtime,
+  };
+
+  fn selected_runtime(options: Options) -> Runtime {
+    let options: RustOptions = options.into();
+    let mut features = options.features;
+    if !options.args.contains(&"--no-default-features".into()) {
+      features.push("default".into());
+    }
+    let manifest = Manifest {
+      inner: r#"
+[features]
+default = ["desktop-cef"]
+desktop-cef = ["dep:tauri-runtime-cef"]
+store-wry = ["dep:tauri-runtime-wry"]
+[dependencies]
+tauri-runtime-cef = { version = "3", optional = true }
+tauri-runtime-wry = { version = "3", optional = true }
+"#
+      .parse()
+      .unwrap(),
+      ..Default::default()
+    };
+    manifest.runtime(
+      &manifest.all_enabled_features(&features),
+      "aarch64-apple-darwin",
+    )
+  }
+
+  #[test]
+  fn build_no_default_features_survives_bundling() {
+    let build = crate::build::Options::try_parse_from([
+      "build",
+      "--features",
+      "store-wry",
+      "--",
+      "--no-default-features",
+    ])
+    .unwrap();
+    let bundle: Options = build.into();
+    assert!(bundle.no_default_features);
+    assert_eq!(selected_runtime(bundle), Runtime::Wry);
+  }
+
+  #[test]
+  fn standalone_bundle_can_disable_default_runtime() {
+    let bundle =
+      Options::try_parse_from(["bundle", "--features", "store-wry", "--no-default-features"])
+        .unwrap();
+    assert_eq!(selected_runtime(bundle), Runtime::Wry);
+  }
+
+  #[test]
+  fn default_runtime_is_preserved() {
+    let build = crate::build::Options::try_parse_from(["build"]).unwrap();
+    let bundle: Options = build.into();
+    assert!(!bundle.no_default_features);
+    assert_eq!(selected_runtime(bundle), Runtime::Cef);
+  }
 }
