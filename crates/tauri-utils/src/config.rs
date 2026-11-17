@@ -4526,7 +4526,12 @@ mod build {
       let allow_link_preview = self.allow_link_preview;
       let disable_input_accessory_view = self.disable_input_accessory_view;
       let data_directory = opt_lit(self.data_directory.as_ref().map(path_buf_lit).as_ref());
-      let data_store_identifier = opt_vec_lit(self.data_store_identifier, identity);
+      let data_store_identifier = opt_lit(
+        self
+          .data_store_identifier
+          .map(|bytes| quote!([#(#bytes),*]))
+          .as_ref(),
+      );
       let scroll_bar_style = &self.scroll_bar_style;
       let limit_navigations_to_app_bound_domains = self.limit_navigations_to_app_bound_domains;
       let activity_name = opt_lit(self.activity_name.as_ref());
@@ -5144,6 +5149,33 @@ mod build {
 #[cfg(test)]
 mod test {
   use super::*;
+
+  #[cfg(any(feature = "build", feature = "build-2"))]
+  #[test]
+  fn webkit_data_store_identifier_tokens_preserve_array_type() {
+    use quote::{ToTokens, quote};
+    let bytes = [
+      0u8, 1, 2, 3, 4, 5, 6, 7, 128, 129, 250, 251, 252, 253, 254, 255,
+    ];
+    let config: WindowConfig = serde_json::from_value(serde_json::json!({
+      "dataStoreIdentifier": bytes
+    }))
+    .unwrap();
+    assert_eq!(config.data_store_identifier, Some(bytes));
+    let tokens = config.to_token_stream().to_string();
+    let expected = quote!(
+      data_store_identifier: ::core::option::Option::Some([#(#bytes),*])
+    )
+    .to_string();
+    assert!(
+      tokens.contains(&expected),
+      "unexpected generated config: {tokens}"
+    );
+
+    let tokens = WindowConfig::default().to_token_stream().to_string();
+    let expected = quote!(data_store_identifier: ::core::option::Option::None).to_string();
+    assert!(tokens.contains(&expected));
+  }
 
   // TODO: create a test that compares a config to a json config
 
