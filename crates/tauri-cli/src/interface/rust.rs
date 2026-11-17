@@ -140,6 +140,7 @@ pub struct Rust {
   config_features: Vec<String>,
   available_targets: Option<Vec<RustupTarget>>,
   main_binary_name: Option<String>,
+  windows_cef_bootstrap: bool,
 }
 
 impl Rust {
@@ -177,11 +178,18 @@ impl Rust {
     }
 
     let app_settings = RustAppSettings::new(config, manifest, target, tauri_dir)?;
+    if config.bundle.cef.windows_bootstrap
+      && (!matches!(app_settings.target_platform, TargetPlatform::Windows)
+        || !config.bundle.cef.embed)
+    {
+      bail!("bundle.cef.windowsBootstrap requires a Windows target and embedded CEF distribution");
+    }
 
     Ok(Self {
       app_settings: Arc::new(app_settings),
       config_features: config.build.features.clone().unwrap_or_default(),
       main_binary_name: config.main_binary_name.clone(),
+      windows_cef_bootstrap: config.bundle.cef.windows_bootstrap,
       available_targets: None,
     })
   }
@@ -196,6 +204,60 @@ impl Rust {
   }
 
   pub fn build(&mut self, options: Options, dirs: &Dirs) -> crate::Result<PathBuf> {
+    if self.windows_cef_bootstrap {
+      let mut features = self.config_features.clone();
+      features.extend(options.features.clone());
+      if !options.args.iter().any(|a| a == "--no-default-features") {
+        features.push("default".into());
+      }
+      if self.app_settings.runtime(&features) != Runtime::Cef {
+        bail!("Windows bootstrap requires the CEF runtime");
+      }
+      if options.args.iter().any(|a| {
+        [
+          "--bins",
+          "--bin",
+          "--all-targets",
+          "--examples",
+          "--example",
+          "--tests",
+          "--benches",
+          "--bench",
+          "--workspace",
+          "--all",
+          "--package",
+          "-p",
+          "--manifest-path",
+        ]
+        .iter()
+        .any(|flag| a == flag || a.starts_with(&format!("{flag}=")))
+      }) {
+        bail!("Windows bootstrap builds only this project's client cdylib");
+      }
+      let library = self.app_settings.windows_bootstrap_library_name()?;
+      let out = self.app_settings.out_dir(&options, dirs.tauri)?;
+      let mut executable = self.app_settings.app_binary_path(&options, dirs.tauri)?;
+      if let Some(name) = &self.main_binary_name {
+        executable = executable.with_file_name(format!("{name}.exe"));
+      }
+      desktop::build_production_app(
+        options,
+        &mut self.available_targets,
+        self.config_features.clone(),
+      )?;
+      let distribution = crate::runtime::cef::resolve_path_for_bundle(
+        crate::runtime::cef::cef_path_env(),
+        &self.app_settings.target_triple,
+        &self.app_settings.workspace_dir,
+      )?;
+      crate::runtime::windows_bootstrap::stage(
+        &distribution,
+        &out.join(format!("{library}.dll")),
+        &executable,
+        &self.app_settings.target_triple,
+      )?;
+      return Ok(executable);
+    }
     desktop::build(
       options,
       &self.app_settings,
@@ -213,6 +275,11 @@ impl Rust {
     on_exit: F,
     dirs: &Dirs,
   ) -> crate::Result<()> {
+    if self.windows_cef_bootstrap {
+      bail!(
+        "Windows CEF bootstrap currently requires an explicit build; tauri dev is not supported for this profile"
+      );
+    }
     let on_exit = Arc::new(on_exit);
 
     let mut run_args = Vec::new();
@@ -517,7 +584,7 @@ fn get_watch_folders(
 impl Rust {
   pub fn build_options(&self, args: &mut Vec<String>, features: &mut Vec<String>, mobile: bool) {
     features.push("tauri/custom-protocol".into());
-    if mobile {
+    if mobile || self.windows_cef_bootstrap {
       if !args.contains(&"--lib".into()) {
         args.push("--lib".into());
       }
@@ -914,6 +981,37 @@ impl AppSettings for RustAppSettings {
       &options.args,
     )?;
 
+    if config.bundle.cef.windows_bootstrap {
+      let mut executable = self.app_binary_path(options, tauri_dir)?;
+      if let Some(name) = &config.main_binary_name {
+        executable = executable.with_file_name(format!("{name}.exe"));
+      }
+      let client = executable.with_extension("dll");
+      let distribution = crate::runtime::cef::resolve_path_for_bundle(
+        crate::runtime::cef::cef_path_env(),
+        &self.target_triple,
+        &self.workspace_dir,
+      )?;
+      let original = self
+        .out_dir(options, tauri_dir)?
+        .join(format!("{}.dll", self.windows_bootstrap_library_name()?));
+      crate::runtime::windows_bootstrap::verify_pair(
+        &distribution,
+        &original,
+        &executable,
+        &self.target_triple,
+      )?;
+      crate::runtime::windows_bootstrap::add_client_resource(&mut settings, &client)?;
+      settings.windows_cef_client_dll = Some(
+        client
+          .file_name()
+          .context("client DLL name missing")?
+          .to_str()
+          .context("client DLL name is not Unicode")?
+          .to_owned(),
+      );
+    }
+
     settings.macos.skip_stapling = options.skip_stapling;
 
     if let Some(plugin_config) = config
@@ -1086,6 +1184,32 @@ impl AppSettings for RustAppSettings {
 }
 
 impl RustAppSettings {
+  fn windows_bootstrap_library_name(&self) -> crate::Result<String> {
+    let manifest = self.manifest.lock().unwrap();
+    let library = manifest
+      .inner
+      .as_table()
+      .get("lib")
+      .and_then(|m| m.as_table())
+      .context("Windows bootstrap requires an explicit [lib] cdylib target")?;
+    if !library
+      .get("crate-type")
+      .and_then(|v| v.as_array())
+      .is_some_and(|types| types.iter().any(|v| v.as_str() == Some("cdylib")))
+    {
+      bail!("Windows bootstrap requires crate-type = [\"cdylib\", ...] in [lib]");
+    }
+    let name = library
+      .get("name")
+      .and_then(|v| v.as_str())
+      .unwrap_or(&self.cargo_package_settings.name)
+      .replace('-', "_");
+    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+      bail!("unsupported Windows client library name");
+    }
+    Ok(name)
+  }
+
   /// The webview runtime the app links when built with the given Cargo features.
   pub fn runtime(&self, features: &[String]) -> Runtime {
     let manifest = self.manifest.lock().unwrap();
@@ -1542,6 +1666,7 @@ pub(crate) fn tauri_config_to_bundle_settings(
   let entitlements = None;
 
   Ok(BundleSettings {
+    windows_cef_client_dll: None,
     identifier: Some(tauri_config.identifier.clone()),
     publisher: config.publisher,
     homepage: config.homepage,
