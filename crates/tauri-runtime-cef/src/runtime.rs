@@ -103,6 +103,10 @@ pub use cef;
 ///   keychain item whose ACL is bound to the code signature of the process that reads
 ///   it. Ad-hoc-signed development builds get a new signature on every rebuild, so macOS
 ///   puts up the keychain password prompt again after every `cargo build`.
+///   Applications can opt into a dedicated service and account using [`Cef::with_settings`].
+///   Changing these names selects a different Keychain item and can make an existing
+///   encrypted profile unreadable; use a separately planned profile migration or a fresh
+///   isolated cache, and retain the old item and profile for recovery.
 /// - on Linux, `os_crypt` asks the D-Bus secret portal, libsecret or KWallet for the
 ///   key, which pops a keyring-unlock dialog the first time an app runs.
 ///
@@ -3816,6 +3820,28 @@ mod configuration_tests {
       Some("disable_non_proxied_udp"),
       "WebRTC values are underscored"
     );
+  }
+
+  #[cfg(target_os = "macos")]
+  #[test]
+  fn custom_keychain_names_reach_cef_settings() {
+    // macOS CEF string conversion uses symbols provided by the dynamically
+    // loaded framework. Load it just as cef-rs does in its own tests; do not
+    // initialize a browser or access any Keychain item.
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    let root = cef::sys::get_cef_dir().expect("CEF distribution is required");
+    let path = root.join(cef::sys::FRAMEWORK_PATH).canonicalize().expect("CEF framework");
+    let path = CString::new(path.as_os_str().as_bytes()).expect("CEF framework path");
+    assert_eq!(unsafe { cef::sys::cef_load_library(path.as_ptr()) }, 1);
+    let _ = cef::api_hash(cef::sys::CEF_API_VERSION_LAST, 0);
+    let cef = Cef::default().with_settings(|settings| {
+      settings.keychain_service_name = "test-only-service".into();
+      settings.keychain_account_name = "test-only-account".into();
+    });
+    let mut settings = cef::Settings::default();
+    cef.settings_callback.expect("settings callback")(&mut settings);
+    assert_eq!(settings.keychain_service_name.to_string(), "test-only-service");
+    assert_eq!(settings.keychain_account_name.to_string(), "test-only-account");
   }
 
   #[test]
