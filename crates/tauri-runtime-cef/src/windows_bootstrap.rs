@@ -98,6 +98,15 @@ impl Drop for BrokerScope {
   }
 }
 
+fn run_entry(entry: impl FnOnce() -> i32) -> i32 {
+  // A Rust unwind must never cross the exported C ABI. A negative child result
+  // is not success: CEF uses -1 when the caller is not a child process.
+  match std::panic::catch_unwind(std::panic::AssertUnwindSafe(entry)) {
+    Ok(status) if status >= 0 => status,
+    _ => 78,
+  }
+}
+
 /// Runs a client DLL entry called by CEF's matching Windows bootstrap.
 ///
 /// A standalone executable still has no broker and Required still refuses it.
@@ -114,7 +123,7 @@ impl Drop for BrokerScope {
 pub unsafe fn run_windows_bootstrap(
   sandbox_info: *mut c_void,
   version_info: *const c_void,
-  entry: impl FnOnce(),
+  entry: impl FnOnce() -> i32,
 ) -> i32 {
   const REFUSED: i32 = 78;
   static ENTERED: AtomicBool = AtomicBool::new(false);
@@ -144,11 +153,7 @@ pub unsafe fn run_windows_bootstrap(
   let Some(_scope) = BrokerScope::enter(sandbox_info, &ENTERED) else {
     return REFUSED;
   };
-  // A Rust unwind must never cross the exported C ABI. Abort remains fatal.
-  match std::panic::catch_unwind(std::panic::AssertUnwindSafe(entry)) {
-    Ok(()) => 0,
-    Err(_) => REFUSED,
-  }
+  run_entry(entry)
 }
 
 #[cfg(test)]
@@ -228,5 +233,13 @@ mod tests {
     assert!(result.is_err());
     assert!(sandbox_info().is_null());
     assert!(entered.load(Ordering::Acquire));
+  }
+
+  #[test]
+  fn entry_preserves_child_exit_and_rejects_negative_or_unwind() {
+    assert_eq!(run_entry(|| 0), 0);
+    assert_eq!(run_entry(|| 37), 37);
+    assert_eq!(run_entry(|| -1), 78);
+    assert_eq!(run_entry(|| panic!("fixture")), 78);
   }
 }
