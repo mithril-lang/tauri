@@ -1822,11 +1822,26 @@ pub struct CefConfig {
   /// the distribution.
   #[serde(default = "default_true")]
   pub embed: bool,
+  /// Build the Windows client as a `cdylib` and stage the matching CEF
+  /// `bootstrap.exe` as the app executable. Requires an embedded CEF distribution
+  /// and `cef_entry_point(windows_bootstrap)` on the library entry.
+  /// This does not certify the Windows process sandbox or sign the binaries.
+  #[serde(default, skip_serializing_if = "CefConfig::bootstrap_disabled")]
+  pub windows_bootstrap: bool,
+}
+
+impl CefConfig {
+  fn bootstrap_disabled(value: &bool) -> bool {
+    !*value
+  }
 }
 
 impl Default for CefConfig {
   fn default() -> Self {
-    Self { embed: true }
+    Self {
+      embed: true,
+      windows_bootstrap: false,
+    }
   }
 }
 

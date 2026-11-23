@@ -4,6 +4,8 @@
 // SPDX-License-Identifier: MIT
 
 mod category;
+mod client_binary;
+pub use client_binary::windows_cef_bundle_marker;
 mod kmp;
 #[cfg(target_os = "linux")]
 mod linux;
@@ -131,6 +133,12 @@ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<Bundle>> {
 
   let main_binary = settings.main_binary()?;
   let main_binary_path = settings.binary_path(main_binary);
+  let client_binary_path = settings.windows_cef_client_dll_path()?;
+  let metadata_binary_path = client_binary_path.as_ref().unwrap_or(&main_binary_path);
+  let mut client_binary_copy = client_binary_path
+    .as_deref()
+    .map(client_binary::ClientBinary::new)
+    .transpose()?;
 
   // We make a copy of the unsigned main_binary so that we can restore it after each package_type step.
   // This allows us to patch the binary correctly and avoids two issues:
@@ -154,7 +162,10 @@ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<Bundle>> {
     }
 
     if settings.binary_patching() {
-      if let Err(e) = patch_binary(&main_binary_path, package_type) {
+      if let Err(e) = patch_binary(metadata_binary_path, package_type) {
+        if client_binary_path.is_some() {
+          return Err(e);
+        }
         log::warn!(
           "Failed to add bundler type to the binary: {e}. Updater plugin may not be able to update this package. This shouldn't normally happen, please report it to https://github.com/tauri-apps/tauri/issues"
         );
@@ -167,8 +178,14 @@ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<Bundle>> {
     }
 
     // sign main binary for every package type after patch
-    if matches!(target_os, TargetPlatform::Windows) && settings.windows().can_sign() {
+    if matches!(target_os, TargetPlatform::Windows)
+      && settings.windows().can_sign()
+      && !settings.no_sign()
+    {
       windows::sign::try_sign(&main_binary_path, settings)?;
+      if let Some(path) = &client_binary_path {
+        windows::sign::try_sign(path, settings)?;
+      }
     }
 
     let bundle_paths = match package_type {
@@ -218,6 +235,12 @@ pub fn bundle_project(settings: &Settings) -> crate::Result<Vec<Bundle>> {
       .open(&main_binary_path)?;
     main_binary_copy.seek(SeekFrom::Start(0))?;
     std::io::copy(&mut main_binary_copy, &mut modified_main_binary)?;
+    if let Some(copy) = &mut client_binary_copy {
+      copy.restore()?;
+    }
+  }
+  if let Some(copy) = &mut client_binary_copy {
+    copy.finish()?;
   }
 
   if let Some(updater) = settings.updater() {
